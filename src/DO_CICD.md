@@ -106,7 +106,7 @@ build_job:               # Имя джоба, который будет выпо
 >
 > ![Успешно отработанный пайплайн_1](screen%2Fscreen_2_05.png)
 >
-> ![Успешно отработанный пайплайн-2](screen%2Fscreen_2_06.png)
+> ![Успешно отработанный пайплайн_2](screen%2Fscreen_2_06.png)
 >
 
 > Файлы, полученные после сборки (артефакты) сохранены в директорию `artifacts`, со сроком хранения 30 дней:
@@ -127,6 +127,8 @@ build_job:               # Имя джоба, который будет выпо
 >
 > ![Измененный файл .gitlab-ci.yml](screen%2Fscreen_3_01.png)
 >
+
+- Флаг `--Werror` в команде `clang-format -n --Werror --verbose src/cat/*.c src/grep/*.c` приводит к тому, что при нарушении форматирования команда `clang-format` завершится с кодом ошибки `1`, что автоматически фейлит `job`.
 
 ```yml
 default:
@@ -164,8 +166,9 @@ clang_format_job:
       fi
   only:
     - develop # Пайплайн запускается только для ветки develop
+  allow_failure: false # Если текущий job фейлится, то фейлим весь пайплайн
 # Если кодстайл правильный, выводим сообщение о прохождении проверки
-# Если найдены проблемы с кодстайлом, завершаем выполнение с ошибкой (пайплайн зафейлится)
+# Если найдены проблемы с кодстайлом, завершаем выполнение с ошибкой (job зафейлится)
 ```
 
 - Специально не копировал файл `.clang-format` из директории `materials/linters/`, для проверки, если `job` кодстайла не прошел, «зафейлится» ли пайплайн.
@@ -188,7 +191,7 @@ clang_format_job:
 >
 > ![Зафейленный пайплайн_1](screen%2Fscreen_3_04.png)
 >
-> ![Зафейленный пайплайн-2](screen%2Fscreen_3_05.png)
+> ![Зафейленный пайплайн_2](screen%2Fscreen_3_05.png)
 >
 
 - `build_job` прошел успешно, а `clang_format_job` «зафейлился», поэтому пайплайн тоже со статусом `failed`.
@@ -200,6 +203,54 @@ clang_format_job:
 
 - Изменил `.gitlab-ci.yml`, добавив команды, которые копируют файл `.clang-format` из директории `materials/linters/`.
 
+> Измененный файл `.gitlab-ci.yml`:
+>
+> ![Измененный файл .gitlab-ci.yml](screen%2Fscreen_3_07.png)
+>
+
+```yml
+clang_format_job:
+  stage: code_style
+  script:
+    - cp materials/linters/.clang-format src/cat/ # Копирование .clang-format в папку cat
+    - cp materials/linters/.clang-format src/grep/ # Копирование .clang-format в папку grep
+    - echo "Running clang-format check..."
+    - |
+      if clang-format -n --Werror --verbose src/cat/*.c src/grep/*.c; then
+        echo "Clang-format check passed."
+      else
+        echo "clang-format check failed."
+        exit 1
+      fi
+  only:
+    - develop
+  allow_failure: false
+```
+
+- Закоммитил и запушил изменения файла `.gitlab-ci.yml` на **гитлаб**.
+
+> Успешно отработанный пайплайн:
+>
+> ![Успешно отработанный пайплайн_1](screen%2Fscreen_3_08.png)
+>
+> ![Успешно отработанный пайплайн_2](screen%2Fscreen_3_09.png)
+>
+
+> Успешно отработанный `clang_format_job`:
+>
+> ![Успешно отработанный clang_format_job](screen%2Fscreen_3_10.png)
+>
+
+----------------------------------------------------------------------------
+
+## 4. Интеграционные тесты:
+- Изменил `.gitlab-ci.yml`, написав этап, который запускает интеграционные тесты из проекта **C2_SimpleBashUtils**.
+
+> Измененный файл `.gitlab-ci.yml`:
+>
+> ![Измененный файл .gitlab-ci.yml](screen%2Fscreen_4_01.png)
+>
+
 ```yml
 default:
   tags: [build]
@@ -207,6 +258,7 @@ default:
 stages:
   - build
   - code_style
+  - test # Этап тестирования
 
 build_job:
   stage: build
@@ -226,8 +278,8 @@ build_job:
 clang_format_job:
   stage: code_style
   script:
-    - cp materials/linters/.clang-format src/cat/ # Копирование .clang-format в папку cat
-    - cp materials/linters/.clang-format src/grep/ # Копирование .clang-format в папку grep
+    - cp materials/linters/.clang-format src/cat/
+    - cp materials/linters/.clang-format src/grep/
     - echo "Running clang-format check..."
     - |
       if clang-format -n --Werror --verbose src/cat/*.c src/grep/*.c; then
@@ -238,25 +290,78 @@ clang_format_job:
       fi
   only:
     - develop
+  allow_failure: false
+
+integration_test_job:
+  stage: test # Этап тестирования
+  script:
+    - echo "Running integration tests..."  # Выводит сообщение о запуске интеграционных тестов
+    - set -e  # Указывает на завершение скрипта при любой ошибке команды (чтобы остановить выполнение при ошибках)
+    - (cd src/cat && make test) || { echo "Integration tests for s21_cat failed."; exit 1; }  # Переходит в директорию "cat" и запускает тесты. Если они провалятся, выводится сообщение об ошибке и выполнение скрипта останавливается
+    - (cd src/grep && make test) || { echo "Integration tests for s21_grep failed."; exit 1; }  # Переходит в директорию "grep" и запускает тесты. Если они провалятся, выводится сообщение об ошибке и выполнение скрипта останавливается
+    - echo "All integration tests passed successfully."  # Выводит сообщение об успешном прохождении всех интеграционных тестов
+  only:
+    - develop # Пайплайн запускается только для ветки develop
+  dependencies:
+    - build_job  # job запустится только при условии, если сборка прошла успешно
+    - clang_format_job  # job запустится только при условии, если кодстайл прошел успешно
+  allow_failure: false  # Если текущий job фейлится, то фейлим весь пайплайн
 ```
 
-- Закоммитил и запушил изменения файла `.gitlab-ci.yml` на **гитлаб**.
+- Что бы текущий **job** «фейлился», укажем в **скрипте** с тестами код выхода с ошибкой, в случае, если хоть один тест упадет.
+
+> Файл `tests_script_cat.sh`:
+>
+> ![Файл tests_script_cat.sh](screen%2Fscreen_4_02.png)
+>
+
+> Файл `tests_script_grep.sh`:
+>
+> ![Файл tests_script_grep.sh](screen%2Fscreen_4_03.png)
+>
+
+- Оставил один зафейленный тест для **s21_cat**.
+- Закоммитил и запушил изменения на **гитлаб**.
+
+
+> «Зафейленный» пайплайн:
+>
+> ![Зафейленный пайплайн_1](screen%2Fscreen_4_04.png)
+>
+> ![Зафейленный пайплайн_2](screen%2Fscreen_4_05.png)
+>
+> ![Зафейленный пайплайн_3](screen%2Fscreen_4_06.png)
+>
+> **Скрипт** завершается с кодом ошибки `1`. Выводится информация, что интеграционные тесты `s21_cat` **провалились**. **Job** завершается с **ошибкой**.
+>
+
+- Оставил один зафейленный тест для **s21_grep**.
+- Закоммитил и запушил изменения на **гитлаб**.
+
+> «Зафейленный» пайплайн:
+>
+> ![Зафейленный пайплайн_1](screen%2Fscreen_4_07.png)
+>
+> ![Зафейленный пайплайн_2](screen%2Fscreen_4_08.png)
+>
+> ![Зафейленный пайплайн_3](screen%2Fscreen_4_09.png)
+>
+> **Скрипт** завершается с кодом ошибки `1`. Выводится информация, что интеграционные тесты `s21_grep` **провалились**. **Job** завершается с **ошибкой**.
+>
+
+- Исправил все тесты на **SUCCESSFUL**.
+- Закоммитил и запушил изменения на **гитлаб**.
 
 > Успешно отработанный пайплайн:
 >
-> ![Успешно отработанный пайплайн_1](screen%2Fscreen_3_07.png)
+> ![Успешно отработанный пайплайн_1](screen%2Fscreen_4_10.png)
 >
-> ![Успешно отработанный пайплайн-2](screen%2Fscreen_3_08.png)
+> ![Успешно отработанный пайплайн_2](screen%2Fscreen_4_11.png)
 >
-
-> Успешно отработанный `clang_format_job`:
+> ![Успешно отработанный пайплайн_3](screen%2Fscreen_4_12.png)
 >
-> ![Успешно отработанный clang_format_job](screen%2Fscreen_3_09.png)
+> Выводится информация, что интеграционные тесты **прошли успешно**. **Job** завершается без **ошибки**.
 >
-
-----------------------------------------------------------------------------
-
-## 4. Интеграционные тесты:
 
 ----------------------------------------------------------------------------
 
