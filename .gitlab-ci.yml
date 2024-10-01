@@ -4,6 +4,7 @@ default:
 stages:
   - build
   - code_style
+  - test
 
 build_job:
   stage: build
@@ -35,3 +36,19 @@ clang_format_job:
       fi
   only:
     - develop
+  allow_failure: false
+
+integration_test_job:
+  stage: test
+  script:
+    - echo "Running integration tests..."
+    - set -e
+    - (cd src/cat && make test) || { echo "Integration tests for s21_cat failed."; exit 1; }
+    - (cd src/grep && make test) || { echo "Integration tests for s21_grep failed."; exit 1; }
+    - echo "All integration tests passed successfully."
+  only:
+    - develop
+  dependencies:
+    - build_job
+    - clang_format_job
+  allow_failure: false
