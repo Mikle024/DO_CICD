@@ -366,9 +366,430 @@ integration_test_job:
 ----------------------------------------------------------------------------
 
 ## 5. Этап деплоя:
+- Поднял вторую виртуальную машину **Ubuntu Server 22.04 LTS**.
+
+> Версия VM:
+>
+> ![Версия VM](screen%2Fscreen_5_01.png)
+>
+
+- Объединил две виртуальные машины одной **сетью**.
+
+<details><summary><strong>Процесс создания одной сети:</strong></summary>
+
+- Добавил новые интерфейсы для каждой виртуальной машины, с типом подключения "Внутренняя сеть".
+
+> Добавление интерфейса для **VM1**:
+>
+> ![Добавление интерфейса VM1](screen%2Fscreen_5_02.png)
+> 
+> Добавление интерфейса **VM2**:
+> 
+> ![Добавление интерфейса VM2](screen%2Fscreen_5_03.png)
+> 
+
+- Изменил настройки **netplan** для каждой виртуальной машины, прописав статические `ip-адреса` в диапазоне одной сети. 
+
+> Файл `/etc/netplan/50-cloud-init.yaml` для **VM1**:
+>
+> ![Файл /etc/netplan/50-cloud-init.yaml VM1](screen%2Fscreen_5_04.png)
+>
+> Файл `/etc/netplan/50-cloud-init.yaml` **VM2**:
+>
+> ![Файл /etc/netplan/50-cloud-init.yaml VM2](screen%2Fscreen_5_05.png)
+>
+
+- Применил настройки **netplan** командой `sudo netplan apply` для каждой **ВМ**.
+- Что бы настройки не изменялись после каждого **перезапуска ВМ** прописал те же настройки в файл `/etc/cloud/cloud.cfg.d/90-installer-network.cfg`.
+
+> Статический `ip-адрес` **VM1**:
+>
+> ![Статический ip-адрес VM1](screen%2Fscreen_5_06.png)
+>
+> Статический `ip-адрес` **VM2**:
+>
+> ![Статический ip-адрес VM2](screen%2Fscreen_5_07.png)
+>
+
+</details>
+
+- Пропинговал каждую машину друг с другом.
+
+> Успешный пинг **VM2** с **VM1**:
+>
+> ![Успешный пинг VM2 с VM1](screen%2Fscreen_5_08.png)
+>
+> Успешный пинг **VM1** с **VM2**:
+>
+> ![Успешный пинг VM1 с VM2](screen%2Fscreen_5_09.png)
+>
+
+- Для переноса **артефактов** с первой ВМ на вторую, установил на вторую ВМ сервис `ssh`.
+
+> Статус сервиса `ssh` **VM2**:
+>
+> ![Статус сервиса ssh VM2](screen%2Fscreen_5_10.png)
+>
+- Написал `bash-script` `deploy_to_second_vm.sh` для копирования артефактов.
+
+> Скрипт `src/deploy_to_second_vm.sh`:
+>
+> ![Скрипт src/deploy_to_second_vm.sh](screen%2Fscreen_5_11.png)
+>
+
+```bash
+#!/bin/bash
+
+REMOTE_USER="mikle"                   # Имя пользователя для SSH подключения к удалённой машине
+REMOTE_HOST="192.168.0.180"            # IP-адрес удалённой машины
+REMOTE_DIR="/usr/local/bin"            # Директория на удалённой машине, куда будут копироваться файлы
+ARTIFACTS_DIR="/home/gitlab-runner/builds/H88J4gtA/0/students/
+DO6_CICD.ID_356283/onionyas_student.21_school.ru/DO6_CICD-1/artifacts"  # Директория, содержащая артефакты
+
+# Проверка наличия директории с артефактами
+if [ -d "$ARTIFACTS_DIR" ]; then
+        echo "Artifacts found, start copy.."  # Сообщение о том, начинается процесс копирования
+
+        # Копирование артефактов s21_cat и s21_grep с помощью scp
+        scp "$ARTIFACTS_DIR/s21_cat" "$REMOTE_USER@$REMOTE_HOST:$REMOTE_DIR" && \
+        scp "$ARTIFACTS_DIR/s21_grep" "$REMOTE_USER@$REMOTE_HOST:$REMOTE_DIR"
+
+        # Проверка, что команда scp завершилась успешно
+        if [ $? -eq 0 ]; then
+                echo "COPY SUCCESSFUL"  # Если копирование прошло успешно, выводим сообщение
+        else
+                echo "COPY FAIL"  # Если возникла ошибка, выводим сообщение и выходим с кодом ошибки
+                exit 1
+        fi
+else
+        echo "NO ARTIFACTS FOUND"  # Если директория с артефактами не найдена, выводим сообщение и завершаем скрипт с кодом ошибки
+        exit 1
+fi
+
+# Проверяем что файлы скопированы
+ssh $REMOTE_USER@$REMOTE_HOST ls -la $REMOTE_DIR
+```
+
+- Что бы скрипт работал самостоятельно без запроса паролей и дополнительных взаимодействий, настроил все необходимы права.
+- Так как `gitlab-runner` на **ВМ** запускается от имени пользователя "*gitlab-runner*", переключился на этого пользователя, предварительно задав ему пароль.
+
+> Пользователь `gitlab-runner`:
+>
+> ![Пользователь gitlab-runner](screen%2Fscreen_5_12.png)
+>
+
+**Перед копированием ключа `id_rsa.pub` необходимо один раз подключиться по `SSH`, чтобы хост был добавлен в файл `known_hosts` на второй ВМ. Это нужно для установления доверия между хостами, что позволит выполнять дальнейшие соединения и передавать ключи для настройки авторизации без пароля.**
+
+- Подключился ко второй **ВМ** по `SSH` командой `ssh user@ip-addresses`.
+- Разорвал соединение командой `exit`.
+
+> Подключение по `SSH`:
+>
+> ![Подключение по SSH](screen%2Fscreen_5_13.png)
+>
+
+- Сгенерировал ключи `SSH` командой `ssh-keygen`.
+- Перенёс публичный ключ на вторую **ВМ** командой `ssh-copy-id user@ip-addresses`.
+
+**Команда `ssh-copy-id` автоматически копирует публичный ключ `SSH` на удалённую машину. Это позволяет в дальнейшем подключаться к этому серверу по SSH без необходимости вводить пароль, используя ключевую аутентификацию.**
+
+> Копирование публичного ключа `SSH`:
+>
+> ![Копирование публичного ключа SSH](screen%2Fscreen_5_14.png)
+>
+
+- Для копирования артефактов в директорию `/usr/local/bin` на второй **ВМ**, сменил владельца этой директории на пользователя, под которым будем выполнять подключение по `SSH`, чтобы предоставить ему необходимые права на запись.
+
+> Смена владельца директории командой `sudo chown -R [USER] [DIRECTORY]`:
+>
+> ![Смена владельца](screen%2Fscreen_5_15.png)
+>
+
+- Проверил вручную копирование артефакта `s21_cat` с первой **ВМ** на вторую, чтобы убедиться, что операция выполняется успешно и без запроса пароля.
+
+> Успешное копирование артефакта `s21_cat`:
+>
+> ![Успешное копирование артефакта s21_cat](screen%2Fscreen_5_16.png)
+>
+
+- Изменил `.gitlab-ci.yml`, написав этап, который «разворачивает» проект на второй **ВМ**. Он будет запускаться вручную при условии, что все предыдущие этапы прошли успешно.
+
+> Измененный файл `.gitlab-ci.yml`:
+>
+> ![Измененный файл .gitlab-ci.yml](screen%2Fscreen_5_17.png)
+>
+
+```yaml
+default:
+  tags: [build]
+
+stages:
+  - build
+  - code_style
+  - test
+  - deploy # Этап деплоя
+
+build_job:
+  stage: build
+  script:
+    - rm -fr artifacts
+    - mkdir artifacts
+    - (cd src/cat && make clean && make s21_cat)
+    - (cd src/grep && make clean && make s21_grep)
+    - cp src/cat/s21_cat src/grep/s21_grep artifacts
+  artifacts:
+    paths:
+      - artifacts
+    expire_in: 30 days
+  only:
+    - develop
+
+clang_format_job:
+  stage: code_style
+  script:
+    - cp materials/linters/.clang-format src/cat/
+    - cp materials/linters/.clang-format src/grep/
+    - echo "Running clang-format check..."
+    - |
+      if clang-format -n --Werror --verbose src/cat/*.c src/grep/*.c; then
+        echo "Clang-format check passed."
+      else
+        echo "clang-format check failed."
+        exit 1
+      fi
+  only:
+    - develop
+  allow_failure: false
+
+integration_test_job:
+  stage: test
+  script:
+    - echo "Running integration tests..."
+    - set -e
+    - (cd src/cat && make test) || { echo "Integration tests for s21_cat failed."; exit 1; }
+    - (cd src/grep && make test) || { echo "Integration tests for s21_grep failed."; exit 1; }
+    - echo "All integration tests passed successfully."
+  only:
+    - develop
+  dependencies:
+    - build_job
+    - clang_format_job
+  allow_failure: false
+
+deploy_job:
+  stage: deploy # Этап деплоя
+  script:
+    - echo "Deploying to the second virtual machine..."
+    - chmod +x src/deploy_to_second_vm.sh # Даем права доступа скрипту
+    - bash src/deploy_to_second_vm.sh # Запускаем скрипт копирования артефектов на вторую ВМ
+  when: manual  # job запускать вручную
+  only:
+    - develop  # Пайплайн запускается только для ветки develop
+  dependencies:
+    - build_job  # job запустится только при условии, если сборка прошла успешно
+    - clang_format_job  # job запустится только при условии, если кодстайл прошел успешно
+    - integration_test_job  # job запустится только при условии успешного завершения тестов
+  allow_failure: false  # Если текущий job фейлится, то фейлим весь пайплайн
+```
+
+- Закоммитил и запушил изменения на **гитлаб**.
+
+> Все этапы отработали, этап деплоя ждет ручного запуска:
+>
+> ![Успешно отработанный пайплайн_1](screen%2Fscreen_5_18.png)
+>
+> ![Успешно отработанный пайплайн_2](screen%2Fscreen_5_19.png)
+>
+> Ручной запуск этапа **deploy**:
+> 
+> ![Успешно отработанный пайплайн_3](screen%2Fscreen_5_20.png)
+> 
+> Успешно отработанный этап **deploy**:
+> 
+> ![Успешно отработанный пайплайн_4](screen%2Fscreen_5_21.png)
+> 
+> ![Успешно отработанный пайплайн_5](screen%2Fscreen_5_22.png)
+> 
+
+- Проверил копирование артефактов на вторую **ВМ**.
+
+> Успешное копирование артефактов после отработанного **пайплайна**:
+>
+> ![Успешное копирование артефактов](screen%2Fscreen_5_23.png)
+>
+
+- Сохранил дампы образов виртуальных машин.
+
+> Сохранение дампа образа **VM1**:
+>
+> ![Сохранение дампа образа VM1](screen%2Fscreen_5_24.png)
+>
+> Сохранение дампа образа **VM2**:
+> 
+> ![Сохранение дампа образа VM2](screen%2Fscreen_5_25.png)
+> 
 
 ----------------------------------------------------------------------------
 
 ## 6. Уведомления:
+- Нашел в **telegram** `@BotFather`, и создал нового бота с помощью команды `/newbot`.
+- С помощью бота `@userinfobot` узнал `id` своего **telegram**-аккаунта командой `/start`.
+<br><br>
+- Написал `bash-script` `telegram_notify.sh` для отправки уведомлений об успешном/неуспешном выполнении всех этапов и пайплайна.
+
+> Скрипт `src/telegram_notify.sh`:
+>
+> ![Скрипт src/telegram_notify.sh](screen%2Fscreen_6_01.png)
+>
+
+```bash
+#!/bin/bash
+
+BOT_TOKEN="[YOUR_BOT_TOKEN]" # Вставить нужный токен
+CHAT_ID="[YOUR_TELEGRAM_ID]" # Вставить нужный id
+
+# Устанавливаем максимальное время ожидания выполнения команды curl (в секундах)
+TIME="10"
+
+# Формируем URL для отправки сообщений боту Telegram
+URL="https://api.telegram.org/bot$BOT_TOKEN/sendMessage"
+
+BUILD_STATUS="✅ Success"  # Статус этапа сборки
+CODE_STYLE_STATUS="✅ Success"  # Статус этапа проверки стиля кода
+TEST_STATUS="✅ Success"  # Статус этапа тестирования
+DEPLOY_STATUS="✅ Success"  # Статус этапа развертывания
+
+# Создаем текст уведомления с деталями о пайплайне
+TEXT="Pipeline Status Notification:
+Project: $CI_PROJECT_NAME
+Pipeline URL: $CI_PIPELINE_URL
+
+Build Stage: $BUILD_STATUS
+- Details: Build completed successfully, artifacts copied.
+
+Code Style Stage: $CODE_STYLE_STATUS
+- Details: Code style check completed successfully.
+
+Test Stage: $TEST_STATUS  # Статус этапа тестирования
+- Details: All integration tests passed successfully.
+
+Deploy Stage: $DEPLOY_STATUS  # Статус этапа развертывания
+- Details: Artifacts successfully deployed to the second virtual machine.
+
+--------------------"
+
+# Отправляем сформированное сообщение в чат Telegram
+curl -s -m $TIME -d "chat_id=$CHAT_ID&disable_web_page_preview=1&text=$TEXT" $URL > /dev/null
+```
+
+- Изменил `.gitlab-ci.yml`, дописав этап, который запустит скрипт.
+
+> Измененный файл `.gitlab-ci.yml`:
+>
+> ![Измененный файл .gitlab-ci.yml](screen%2Fscreen_6_02.png)
+>
+
+```yaml
+default:
+  tags: [build]
+
+stages:
+  - build
+  - code_style
+  - test
+  - deploy
+  - notify  # Этап отправки уведомлений об успешном/неуспешном выполнении пайплайна
+
+build_job:
+  stage: build
+  script:
+    - rm -fr artifacts
+    - mkdir artifacts
+    - (cd src/cat && make clean && make s21_cat)
+    - (cd src/grep && make clean && make s21_grep)
+    - cp src/cat/s21_cat src/grep/s21_grep artifacts
+  artifacts:
+    paths:
+      - artifacts
+    expire_in: 30 days
+  only:
+    - develop
+
+clang_format_job:
+  stage: code_style
+  script:
+    - cp materials/linters/.clang-format src/cat/
+    - cp materials/linters/.clang-format src/grep/
+    - echo "Running clang-format check..."
+    - |
+      if clang-format -n --Werror --verbose src/cat/*.c src/grep/*.c; then
+        echo "Clang-format check passed."
+      else
+        echo "clang-format check failed."
+        exit 1
+      fi
+  only:
+    - develop
+  allow_failure: false
+
+integration_test_job:
+  stage: test
+  script:
+    - echo "Running integration tests..."
+    - set -e
+    - (cd src/cat && make test) || { echo "Integration tests for s21_cat failed."; exit 1; }
+    - (cd src/grep && make test) || { echo "Integration tests for s21_grep failed."; exit 1; }
+    - echo "All integration tests passed successfully."
+  only:
+    - develop
+  dependencies:
+    - build_job
+    - clang_format_job
+  allow_failure: false
+
+deploy_job:
+  stage: deploy
+  script:
+    - echo "Deploying to the second virtual machine..."
+    - chmod +x src/deploy_to_second_vm.sh
+    - bash src/deploy_to_second_vm.sh
+  when: manual
+  only:
+    - develop
+  dependencies:
+    - build_job
+    - clang_format_job
+    - integration_test_job
+  allow_failure: false
+
+notify_job:
+  stage: notify # Этап отправки уведомлений об успешном/неуспешном выполнении пайплайна
+  script:
+    - echo "Sending notification to Telegram..."
+    - chmod +x src/telegram_notify.sh # Даем права доступа скрипту
+    - bash src/telegram_notify.sh # Запускаем скрипт отправки уведомлений в telegram
+  when: always job запускается всегда
+  only:
+    - develop  # Пайплайн запускается только для ветки develop
+  dependencies:
+    - build_job # job запустится только при условии, если сборка прошла успешно
+    - clang_format_job # job запустится только при условии, если кодстайл прошел успешно
+    - integration_test_job # job запустится только при условии успешного завершения тестов
+    - deploy_job # job запустится только при условии успешного завершения деплоя
+```
+
+- Закоммитил и запушил изменения на **гитлаб**.
+
+> Успешно отработанный пайплайн:
+>
+> ![Успешно отработанный пайплайн_1](screen%2Fscreen_6_03.png)
+>
+> ![Успешно отработанный пайплайн_2](screen%2Fscreen_6_04.png)
+>
+
+> Сообщение от **telegram-бота** с информацией о пайплайне **"CI/CD"**:
+>
+> ![Измененный файл .gitlab-ci.yml](screen%2Fscreen_6_05.png)
+>
 
 ----------------------------------------------------------------------------
