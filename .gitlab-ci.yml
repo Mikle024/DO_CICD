@@ -5,6 +5,8 @@ stages:
   - build
   - code_style
   - test
+  - deploy
+  - notify
 
 build_job:
   stage: build
@@ -52,3 +54,33 @@ integration_test_job:
     - build_job
     - clang_format_job
   allow_failure: false
+
+deploy_job:
+  stage: deploy
+  script:
+    - echo "Deploying to the second virtual machine..."
+    - chmod +x src/deploy_to_second_vm.sh
+    - bash src/deploy_to_second_vm.sh
+  when: manual
+  only:
+    - develop
+  dependencies:
+    - build_job
+    - clang_format_job
+    - integration_test_job
+  allow_failure: false
+
+notify_job:
+  stage: notify
+  script:
+    - echo "Sending notification to Telegram..."
+    - chmod +x src/telegram_notify.sh
+    - bash src/telegram_notify.sh
+  when: always
+  only:
+    - develop
+  dependencies:
+    - build_job
+    - clang_format_job
+    - integration_test_job
+    - deploy_job
